@@ -14,7 +14,7 @@ I decided on this project to challenge myself to improve as a software engineer.
 
 ## Roadmap as of 6/17 (in progress list of things to do)
 
-- [ ] Fix the blocking dead-letter send.
+- [x] Fix the blocking dead-letter send.
 - [ ] Add a consumer that drains the dead-letter queue; treat the DLQ as the poison-message destination for messages that fail repeatedly.
 - [ ] Fix the `PublishWithStorage` by-value bug so events actually persist to the caller's storage.
 - [ ] Make `EventStorage` concurrency-safe and add real error handling to `StoreEvent`.

@@ -166,11 +166,18 @@ func (bus *EventBus) PublishWithStorage(topic string, payload any, storage Event
 		case subscriber.Channel <- event:
 			// Event was sent successfully
 		default:
-			// Send to dead letter queue
-			bus.deadLetterQueue <- DeadLetter{
+			// Send to dead letter queue non blocking
+			// Withtout this select the write will be suspended if the buffer is full due to the nature of goroutines waiting until the send is finished
+			select {
+			// This is linked to a consumer so that the queue stays open in theory
+			case bus.deadLetterQueue <- DeadLetter{
 				Event:        event,
 				SubscriberID: subID,
 				Reason:       "Buffer full",
+			}:
+			default:
+				//need to do proper error handling here
+				fmt.Println("DLQ full")
 			}
 		}
 	}
