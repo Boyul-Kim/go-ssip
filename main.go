@@ -124,6 +124,7 @@ func (bus *EventBus) Publish(topic string, payload any) {
 
 	for subID := range topicSubs {
 		subscriber := bus.subscribers[subID]
+		// Load shedding
 		select {
 		case subscriber.Channel <- event:
 			// Event was sent successfully
@@ -197,6 +198,16 @@ func handleEvents(ctx context.Context, subscriber *Subscriber) {
 			fmt.Printf("Subscriber %s context done\n", subscriber.ID)
 			return
 		}
+	}
+}
+
+// dead letter consumer
+func (bus *EventBus) ProcessDeadLetterEvents(ctx context.Context) {
+	select {
+	case dl := <-bus.deadLetterQueue:
+		fmt.Println("Dead letter queue processed", dl)
+	case <-ctx.Done():
+		return
 	}
 }
 
