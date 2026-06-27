@@ -17,6 +17,7 @@ type Event struct {
 	Time    time.Time
 }
 
+// TODO make it concurrency safe with mutex
 type EventStorage struct {
 	storage []Event
 }
@@ -39,6 +40,7 @@ type EventBus struct {
 	mu              sync.RWMutex
 	bufferSize      int
 	deadLetterQueue chan DeadLetter
+	eventStorage    *EventStorage
 }
 
 func (eventStorage *EventStorage) StoreEvent(event Event) error {
@@ -53,6 +55,7 @@ func NewEventBus(bufferSize int) *EventBus {
 		topics:          make(map[string]map[string]bool),
 		bufferSize:      bufferSize,
 		deadLetterQueue: make(chan DeadLetter, bufferSize),
+		eventStorage:    &EventStorage{},
 	}
 }
 
@@ -107,6 +110,44 @@ func (bus *EventBus) Unsubscribe(id string) error {
 	return nil
 }
 
+// func (bus *EventBus) Publish(topic string, payload any) {
+// 	event := Event{
+// 		Topic:   topic,
+// 		Payload: payload,
+// 		Time:    time.Now(),
+// 	}
+
+// 	bus.mu.RLock()
+// 	defer bus.mu.RUnlock()
+
+// 	topicSubs, exists := bus.topics[topic]
+// 	if !exists {
+// 		return
+// 	}
+
+// 	for subID := range topicSubs {
+// 		subscriber := bus.subscribers[subID]
+// 		select {
+// 		case subscriber.Channel <- event:
+// 			// Event was sent successfully
+// 		default:
+// 			// Send to dead letter queue non blocking
+// 			// Withtout this select the write will be suspended if the buffer is full due to the nature of goroutines waiting until the send is finished
+// 			select {
+// 			// This is linked to a consumer so that the queue stays open in theory
+// 			case bus.deadLetterQueue <- DeadLetter{
+// 				Event:        event,
+// 				SubscriberID: subID,
+// 				Reason:       "Buffer full",
+// 			}:
+// 			default:
+// 				//need to do proper error handling here
+// 				fmt.Println("DLQ full")
+// 			}
+// 		}
+// 	}
+// }
+
 func (bus *EventBus) Publish(topic string, payload any) {
 	event := Event{
 		Topic:   topic,
@@ -114,46 +155,8 @@ func (bus *EventBus) Publish(topic string, payload any) {
 		Time:    time.Now(),
 	}
 
-	bus.mu.RLock()
-	defer bus.mu.RUnlock()
-
-	topicSubs, exists := bus.topics[topic]
-	if !exists {
-		return
-	}
-
-	for subID := range topicSubs {
-		subscriber := bus.subscribers[subID]
-		select {
-		case subscriber.Channel <- event:
-			// Event was sent successfully
-		default:
-			// Send to dead letter queue non blocking
-			// Withtout this select the write will be suspended if the buffer is full due to the nature of goroutines waiting until the send is finished
-			select {
-			// This is linked to a consumer so that the queue stays open in theory
-			case bus.deadLetterQueue <- DeadLetter{
-				Event:        event,
-				SubscriberID: subID,
-				Reason:       "Buffer full",
-			}:
-			default:
-				//need to do proper error handling here
-				fmt.Println("DLQ full")
-			}
-		}
-	}
-}
-
-func (bus *EventBus) PublishWithStorage(topic string, payload any, storage EventStorage) {
-	event := Event{
-		Topic:   topic,
-		Payload: payload,
-		Time:    time.Now(),
-	}
-
 	// Store event before publishing
-	err := storage.StoreEvent(event)
+	err := bus.eventStorage.StoreEvent(event)
 	if err != nil {
 		return
 	}
