@@ -43,7 +43,10 @@ type EventBus struct {
 	eventStorage    *EventStorage
 }
 
-func (eventStorage *EventStorage) StoreEvent(event Event) error {
+func (eventStorage *EventStorage) StoreEvent(ctx context.Context, event Event) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	//TODO better error handling needed
 	eventStorage.mu.Lock()
 	defer eventStorage.mu.Unlock()
@@ -112,7 +115,7 @@ func (bus *EventBus) Unsubscribe(id string) error {
 	return nil
 }
 
-func (bus *EventBus) Publish(topic string, payload any) {
+func (bus *EventBus) Publish(ctx context.Context, topic string, payload any) error {
 	event := Event{
 		Topic:   topic,
 		Payload: payload,
@@ -120,9 +123,9 @@ func (bus *EventBus) Publish(topic string, payload any) {
 	}
 
 	// Store event before publishing
-	err := bus.eventStorage.StoreEvent(event)
+	err := bus.eventStorage.StoreEvent(ctx, event)
 	if err != nil {
-		return
+		return err
 	}
 
 	// Continue with normal publishing
@@ -131,10 +134,14 @@ func (bus *EventBus) Publish(topic string, payload any) {
 
 	topicSubs, exists := bus.topics[topic]
 	if !exists {
-		return
+		return fmt.Errorf("could not find topic")
 	}
 
 	for subID := range topicSubs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		subscriber := bus.subscribers[subID]
 		select {
 		case subscriber.Channel <- event:
@@ -152,9 +159,12 @@ func (bus *EventBus) Publish(topic string, payload any) {
 			default:
 				//need to do proper error handling here
 				fmt.Println("DLQ full")
+				return fmt.Errorf("DLQ full")
 			}
 		}
 	}
+
+	return nil
 }
 
 func handleEvents(ctx context.Context, subscriber *Subscriber) {
@@ -204,7 +214,7 @@ func main() {
 		wg.Add(1)
 		go func(sub *Subscriber) {
 			defer wg.Done()
-			go handleEvents(ctx, sub)
+			handleEvents(ctx, sub)
 		}(sub)
 	}
 
@@ -215,9 +225,17 @@ func main() {
 	}()
 
 	// Publish events
-	bus.Publish("temperature", "Living room: 21.5°C")
-	bus.Publish("security", "Front door opened")
-	bus.Publish("energy", "Solar output: 3.2 kW")
+	if err := bus.Publish(ctx, "temperature", "Living room: 21.5°C"); err != nil {
+		fmt.Println("error with publishing", err)
+	}
+
+	if err := bus.Publish(ctx, "security", "Front door opened"); err != nil {
+		fmt.Println("error with publishing", err)
+	}
+
+	if err := bus.Publish(ctx, "energy", "Solar output: 3.2 kW"); err != nil {
+		fmt.Println("error with publishing", err)
+	}
 
 	// Block until shutdown signal
 	<-ctx.Done()
