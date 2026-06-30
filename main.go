@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -173,44 +176,63 @@ func handleEvents(ctx context.Context, subscriber *Subscriber) {
 
 // dead letter consumer
 func (bus *EventBus) ProcessDeadLetterEvents(ctx context.Context) {
-	select {
-	case dl := <-bus.deadLetterQueue:
-		fmt.Println("Dead letter queue processed", dl)
-	case <-ctx.Done():
-		return
+	for {
+		select {
+		case dl := <-bus.deadLetterQueue:
+			fmt.Println("Dead letter queue processed", dl)
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 
 func main() {
 	bus := NewEventBus(10)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	var wg sync.WaitGroup
 
 	// Create subscribers
 	phoneApp, _ := bus.Subscribe("phone_app", []string{"security", "temperature"})
 	thermostat, _ := bus.Subscribe("thermostat", []string{"temperature"})
 	homeHub, _ := bus.Subscribe("home_hub", []string{"security", "temperature", "energy"})
 
-	time.Sleep(5 * time.Second)
+	// Simple test for handling events
 
-	// Start handling events
-	go handleEvents(ctx, phoneApp)
-	go handleEvents(ctx, thermostat)
-	go handleEvents(ctx, homeHub)
+	for _, sub := range []*Subscriber{phoneApp, thermostat, homeHub} {
+		wg.Add(1)
+		go func(sub *Subscriber) {
+			defer wg.Done()
+			go handleEvents(ctx, sub)
+		}(sub)
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		bus.ProcessDeadLetterEvents(ctx)
+	}()
 
 	// Publish events
 	bus.Publish("temperature", "Living room: 21.5°C")
 	bus.Publish("security", "Front door opened")
 	bus.Publish("energy", "Solar output: 3.2 kW")
 
-	// Allow time for event processing
-	time.Sleep(5 * time.Second)
+	// Block until shutdown signal
+	<-ctx.Done()
+	fmt.Println("Shutdown signal received")
 
-	// Unsubscribe a client
-	bus.Unsubscribe("thermostat")
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
 
-	// Publish more events
-	bus.Publish("temperature", "Living room: 22.0°C")
-
-	time.Sleep(5 * time.Second)
+	select {
+	case <-done:
+		fmt.Println("Clean shutdown")
+	case <-time.After(10 * time.Second):
+		fmt.Println("Shutdown timeout — forcing exit")
+	}
 }
